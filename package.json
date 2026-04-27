@@ -1,0 +1,54 @@
+{
+  "name": "shardview",
+  "version": "0.1.2",
+  "description": "Self-hosted database browser for any Prisma project. Drop-in CLI to browse, filter and edit data with tabs, multi-level filters, mass edit, cascade delete and pivot views.",
+  "license": "BSD-3-Clause",
+  "author": "max@segf.net",
+  "homepage": "https://github.com/callb4ck/shardview#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/callb4ck/shardview.git"
+  },
+  "bugs": {
+    "url": "https://github.com/callb4ck/shardview/issues"
+  },
+  "type": "module",
+  "bin": {
+    "shardview": "bin/shardview.js"
+  },
+  "files": [
+    "bin/",
+    "server/src/",
+    "client/dist/",
+    "LICENSE",
+    "README.md"
+  ],
+  "keywords": [
+    "prisma",
+    "database",
+    "browser",
+    "admin",
+    "studio",
+    "data",
+    "cli",
+    "dmmf"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=client",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
