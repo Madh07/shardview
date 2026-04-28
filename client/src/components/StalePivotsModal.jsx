@@ -6,6 +6,8 @@ export default function StalePivotsModal({ onClose, onJump }) {
   const [error, setError] = useState(null)
   const [data, setData] = useState(null)
   const [includeNull, setIncludeNull] = useState(false)
+  const [expanded, setExpanded] = useState(() => localStorage.getItem('stalePivotsExpanded') === '1')
+  useEffect(() => { localStorage.setItem('stalePivotsExpanded', expanded ? '1' : '0') }, [expanded])
 
   useEffect(() => {
     let alive = true
@@ -21,7 +23,17 @@ export default function StalePivotsModal({ onClose, onJump }) {
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
-      <div className="modal" style={{ maxWidth: 720, maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+      <div
+        className={`modal stale-pivots-modal ${expanded ? 'is-expanded' : ''}`}
+        style={{
+          width: expanded ? 'calc(100vw - 40px)' : 'min(960px, calc(100vw - 40px))',
+          maxWidth: expanded ? 'none' : '960px',
+          height: expanded ? 'calc(100vh - 60px)' : 'auto',
+          maxHeight: expanded ? 'calc(100vh - 60px)' : '85vh',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
         <div className="modal-header">
           <div>
             <div className="modal-title">Stale pivot rows</div>
@@ -29,7 +41,28 @@ export default function StalePivotsModal({ onClose, onJump }) {
               {loading ? 'Scanning…' : error ? 'Scan failed' : `${total} row${total !== 1 ? 's' : ''} across ${data?.pivots?.length || 0} pivot${(data?.pivots?.length || 0) !== 1 ? 's' : ''}`}
             </div>
           </div>
-          <button className="modal-close" onClick={onClose}>×</button>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <button
+              type="button"
+              className="modal-close"
+              onClick={() => setExpanded(e => !e)}
+              title={expanded ? 'Collapse' : 'Expand to fullscreen'}
+              style={{ borderRadius: 6, width: 28, height: 24 }}
+            >
+              {expanded ? (
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M4 14h6v6"/><path d="M20 10h-6V4"/>
+                  <path d="M14 10l7-7"/><path d="M3 21l7-7"/>
+                </svg>
+              ) : (
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M15 3h6v6"/><path d="M9 21H3v-6"/>
+                  <path d="M21 3l-7 7"/><path d="M3 21l7-7"/>
+                </svg>
+              )}
+            </button>
+            <button className="modal-close" onClick={onClose}>×</button>
+          </div>
         </div>
         <div className="modal-body" style={{ overflow: 'auto', flex: 1 }}>
           <label className="stale-pivot-toggle">

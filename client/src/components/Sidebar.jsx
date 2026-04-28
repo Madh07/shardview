@@ -98,6 +98,8 @@ export default function Sidebar({
   onTogglePin,
   onReorderPinned,
   onFindStalePivots,
+  pivotOverrides = [],
+  onTogglePivotOverride,
 }) {
   const [menu, setMenu] = useState(null)  // { x, y, model }
   const [pinDragName, setPinDragName] = useState(null)
@@ -180,14 +182,22 @@ export default function Sidebar({
         onClick={e => handleClick(e, model)}
         onAuxClick={e => handleAuxClick(e, model)}
         onContextMenu={e => handleContextMenu(e, model)}
-        title={model.isPivot ? `${model.name} — pivot/join table` : model.name}
+        title={
+          model.isPivotStrict ? `${model.name} — pivot/join table`
+            : model.isPivot ? `${model.name} — manually treated as pivot`
+            : model.name
+        }
         {...dragProps}
       >
         <ModelIcon name={model.name} color={getColor(originalIdx)} />
         <div className="sidebar-model-info">
           <div className="sidebar-model-name">
             {model.name}
-            {model.isPivot && <span className="sidebar-pivot-badge">PIVOT</span>}
+            {model.isPivotStrict
+              ? <span className="sidebar-pivot-badge">PIVOT</span>
+              : model.isPivot
+                ? <span className="sidebar-pivot-badge sidebar-pivot-badge-soft">AS PIVOT</span>
+                : null}
           </div>
           <div className="sidebar-model-count">
             {model.count} {model.count === 1 ? 'record' : 'records'}
@@ -339,6 +349,21 @@ export default function Sidebar({
               label: pinnedSet.has(menu.model.name) ? 'Unpin' : 'Pin to top',
               onClick: () => onTogglePin?.(menu.model.name),
             },
+            // Strict pivots can't be "untreated" — they're auto-detected from
+            // the schema. Only offer the toggle for non-strict models.
+            ...(onTogglePivotOverride && !menu.model.isPivotStrict ? [{
+              icon: (
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 18l6-6-6-6"/>
+                  <path d="M3 12h6"/>
+                  <path d="M15 12h6"/>
+                </svg>
+              ),
+              label: pivotOverrides.includes(menu.model.name)
+                ? 'Stop treating as pivot'
+                : 'Treat as pivot',
+              onClick: () => onTogglePivotOverride?.(menu.model.name),
+            }] : []),
           ]}
         />
       )}

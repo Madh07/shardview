@@ -1,5 +1,16 @@
 const BASE = '/api'
 
+// Modules outside React can read this to attach the user's pivot overrides
+// to outgoing requests. The host App keeps it in sync with localStorage.
+let pivotOverrideCache = []
+export function setPivotOverrides(list) {
+  pivotOverrideCache = Array.isArray(list) ? list.filter(Boolean) : []
+}
+function withPivotOverride(extra = {}) {
+  if (pivotOverrideCache.length === 0) return extra
+  return { ...extra, pivotOverride: pivotOverrideCache.join(',') }
+}
+
 async function req(method, path, body) {
   const res = await fetch(`${BASE}${path}`, {
     method,
@@ -14,11 +25,16 @@ async function req(method, path, body) {
 }
 
 export const api = {
-  getModels: () => req('GET', '/models'),
+  getModels: () => {
+    const params = withPivotOverride()
+    const q = new URLSearchParams(params).toString()
+    return req('GET', `/models${q ? `?${q}` : ''}`)
+  },
   getSchema: (model) => req('GET', `/models/${model}/schema`),
   getRecords: (model, params = {}) => {
+    const merged = withPivotOverride(params)
     const q = new URLSearchParams(
-      Object.entries(params).filter(([, v]) => v !== undefined && v !== '' && v !== null)
+      Object.entries(merged).filter(([, v]) => v !== undefined && v !== '' && v !== null)
     ).toString()
     return req('GET', `/models/${model}/records${q ? `?${q}` : ''}`)
   },
@@ -37,7 +53,9 @@ export const api = {
   },
   syncPivot: (pivotModel, body) => req('POST', `/pivot/${pivotModel}/sync`, body),
   getStalePivots: (opts = {}) => {
-    const q = opts.includeNull ? '?includeNull=true' : ''
-    return req('GET', `/stale-pivots${q}`)
+    const merged = withPivotOverride()
+    if (opts.includeNull) merged.includeNull = 'true'
+    const q = new URLSearchParams(merged).toString()
+    return req('GET', `/stale-pivots${q ? `?${q}` : ''}`)
   },
 }

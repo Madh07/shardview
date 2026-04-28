@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { api } from './api.js'
+import { api, setPivotOverrides } from './api.js'
 import Sidebar from './components/Sidebar.jsx'
 import TabBar from './components/TabBar.jsx'
 import Toolbar from './components/Toolbar.jsx'
@@ -151,6 +151,12 @@ export default function App() {
       return Array.isArray(v) ? v : []
     } catch { return [] }
   })
+  const [pivotOverrides, setPivotOverridesState] = useState(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem('pivotOverrides') || '[]')
+      return Array.isArray(v) ? v : []
+    } catch { return [] }
+  })
   const [addModalOpen, setAddModalOpen] = useState(false)
   const [duplicateSource, setDuplicateSource] = useState(null)  // { values } pre-fill for AddRecordModal
   const [saving, setSaving] = useState(false)
@@ -179,6 +185,27 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('pinnedModels', JSON.stringify(pinnedModels))
   }, [pinnedModels])
+
+  // Sync overrides to the API helper module + storage. Skip the very first
+  // render so we don't fire a redundant /api/models call (useEffect on load
+  // already triggers loadModels()).
+  const firstOverrideRender = useRef(true)
+  useEffect(() => {
+    localStorage.setItem('pivotOverrides', JSON.stringify(pivotOverrides))
+    setPivotOverrides(pivotOverrides)
+    if (firstOverrideRender.current) {
+      firstOverrideRender.current = false
+      return
+    }
+    // Re-fetch models so badges reflect the override immediately.
+    loadModels()
+  }, [pivotOverrides])
+
+  function togglePivotOverride(name) {
+    setPivotOverridesState(prev =>
+      prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]
+    )
+  }
 
   // Persist tabs and active tab so the view survives a reload.
   useEffect(() => {
@@ -667,6 +694,8 @@ export default function App() {
         onTogglePin={togglePin}
         onReorderPinned={reorderPinned}
         onFindStalePivots={() => setStalePivotsOpen(true)}
+        pivotOverrides={pivotOverrides}
+        onTogglePivotOverride={togglePivotOverride}
       />
 
       <div className="main">

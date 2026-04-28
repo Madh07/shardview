@@ -145,6 +145,29 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
     return modelMap[modelName]?.primaryKey !== null
   }
 
+  function parsePivotOverride(req) {
+    const raw = req?.query?.pivotOverride
+    if (!raw) return new Set()
+    return new Set(String(raw).split(',').map(s => s.trim()).filter(Boolean))
+  }
+
+  // True if the model is a strict pivot, OR the user has marked it as one
+  // and it still has at least 2 single-FK relations (so pivot semantics make
+  // sense — fewer than 2 sides means there's nothing to "join").
+  function isEffectivelyPivot(name, overrideSet) {
+    const m = modelMap[name]
+    if (!m) return false
+    if (isPivotModel(m)) return true
+    if (overrideSet?.has(name)) {
+      const fks = m.fields.filter(f =>
+        f.kind === 'object' && !f.isList
+        && Array.isArray(f.relationFromFields) && f.relationFromFields.length > 0
+      )
+      return fks.length >= 2
+    }
+    return false
+  }
+
   // A pivot model is one that has only id/FK scalar fields (and standard
   // timestamps) plus relation references — i.e. its sole purpose is to
   // connect two or more other models (M2M join tables, role-permission
@@ -169,8 +192,9 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
   }
 
   // GET /api/models
-  app.get('/api/models', async (_req, res) => {
+  app.get('/api/models', async (req, res) => {
     try {
+      const overrideSet = parsePivotOverride(req)
       const models = await Promise.all(
         dmmf.datamodel.models.map(async model => {
           let count = 0
@@ -179,7 +203,8 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
             name: model.name,
             count,
             isCompositeId: isCompositeId(model.name),
-            isPivot: isPivotModel(model),
+            isPivot: isEffectivelyPivot(model.name, overrideSet),
+            isPivotStrict: isPivotModel(model),
           }
         })
       )
@@ -353,9 +378,11 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
       )
     }
 
+    const overrideSet = parsePivotOverride(req)
+
     const include = {}
     singleRelFields.forEach(f => {
-      if (modelMap[f.type] && isPivotModel(modelMap[f.type])) {
+      if (isEffectivelyPivot(f.type, overrideSet)) {
         const nested = {}
         pivotOtherSingleRels(f.type).forEach(ff => {
           // Skip the side that points back to current model via the same relation
@@ -368,7 +395,7 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
       }
     })
 
-    const pivotListFields = listRelFields.filter(f => modelMap[f.type] && isPivotModel(modelMap[f.type]))
+    const pivotListFields = listRelFields.filter(f => isEffectivelyPivot(f.type, overrideSet))
     const nonPivotListFields = listRelFields.filter(f => !pivotListFields.includes(f))
 
     pivotListFields.forEach(f => {
@@ -510,10 +537,11 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
   // includeNull=true to also flag null FKs.
   app.get('/api/stale-pivots', async (req, res) => {
     const includeNull = req.query.includeNull === 'true' || req.query.includeNull === '1'
+    const overrideSet = parsePivotOverride(req)
     const result = []
     try {
       for (const m of dmmf.datamodel.models) {
-        if (!isPivotModel(m)) continue
+        if (!isEffectivelyPivot(m.name, overrideSet)) continue
         const pivotRels = m.fields.filter(f =>
           f.kind === 'object' && !f.isList
           && Array.isArray(f.relationFromFields) && f.relationFromFields.length > 0
