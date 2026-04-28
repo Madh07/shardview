@@ -232,12 +232,60 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
       where = baseHas ? { AND: [where, filterGroup] } : filterGroup
     }
 
-    // Build relation includes so the UI can show actual related data
+    // Build relation includes so the UI can show actual related data.
+    //
+    // For relations whose target is a pivot model we go one step further and
+    // surface the pivot's other-side connection state, so the UI can warn when
+    // a "jump-through" would land on a missing member (pivot row exists but
+    // its other-side FK is null / unresolved).
+    //  - Single rel → pivot: nest include with the pivot's other single rels.
+    //  - List rel → pivot:   replace `_count` with actual rows but select only
+    //                        the pivot's own FK columns (small payload).
     const singleRelFields = modelFields.filter(f => f.kind === 'object' && !f.isList)
     const listRelFields = modelFields.filter(f => f.kind === 'object' && f.isList)
+
+    function pivotOtherSingleRels(pivotName) {
+      const pm = modelMap[pivotName]
+      if (!pm) return []
+      return pm.fields.filter(ff =>
+        ff.kind === 'object' && !ff.isList
+        && Array.isArray(ff.relationFromFields) && ff.relationFromFields.length > 0
+      )
+    }
+
     const include = {}
-    singleRelFields.forEach(f => { include[f.name] = true })
-    if (listRelFields.length > 0) {
+    singleRelFields.forEach(f => {
+      if (modelMap[f.type] && isPivotModel(modelMap[f.type])) {
+        const nested = {}
+        pivotOtherSingleRels(f.type).forEach(ff => {
+          // Skip the side that points back to current model via the same relation
+          if (ff.relationName === f.relationName) return
+          nested[ff.name] = true
+        })
+        include[f.name] = Object.keys(nested).length > 0 ? { include: nested } : true
+      } else {
+        include[f.name] = true
+      }
+    })
+
+    const pivotListFields = listRelFields.filter(f => modelMap[f.type] && isPivotModel(modelMap[f.type]))
+    const nonPivotListFields = listRelFields.filter(f => !pivotListFields.includes(f))
+
+    pivotListFields.forEach(f => {
+      const pivotRels = pivotOtherSingleRels(f.type)
+      const select = {}
+      pivotRels.forEach(ff => {
+        ff.relationFromFields.forEach(col => { select[col] = true })
+      })
+      // Always select the pivot's id field too so React keys are stable
+      const pivotId = getIdField(f.type)
+      if (pivotId) select[pivotId] = true
+      include[f.name] = Object.keys(select).length > 0 ? { select } : true
+    })
+
+    if (nonPivotListFields.length > 0 || pivotListFields.length > 0) {
+      // Keep `_count` so the UI's existing count badge stays accurate even
+      // when we also include the pivot rows themselves.
       include._count = { select: Object.fromEntries(listRelFields.map(f => [f.name, true])) }
     }
 
@@ -353,6 +401,88 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
       await getDelegate(model).delete({ where: { [idField]: idValue } })
       res.json({ success: true })
     } catch (err) { res.status(400).json({ error: err.message }) }
+  })
+
+  // GET /api/stale-pivots?includeNull=true
+  // Scans every pivot model for rows where one or more of the FK columns
+  // points at a row that no longer exists in the referenced model. By default
+  // null FK values are NOT considered stale (they're often deliberate). Pass
+  // includeNull=true to also flag null FKs.
+  app.get('/api/stale-pivots', async (req, res) => {
+    const includeNull = req.query.includeNull === 'true' || req.query.includeNull === '1'
+    const result = []
+    try {
+      for (const m of dmmf.datamodel.models) {
+        if (!isPivotModel(m)) continue
+        const pivotRels = m.fields.filter(f =>
+          f.kind === 'object' && !f.isList
+          && Array.isArray(f.relationFromFields) && f.relationFromFields.length > 0
+        )
+        if (pivotRels.length < 2) continue
+
+        const idField = getIdField(m.name)
+        // Select pivot id + every FK column.
+        const select = { [idField]: true }
+        pivotRels.forEach(r => r.relationFromFields.forEach(c => { select[c] = true }))
+
+        let rows = []
+        try { rows = await getDelegate(m.name).findMany({ select }) } catch { continue }
+
+        const sides = pivotRels.map(r => ({
+          relName: r.name,
+          targetModel: r.type,
+          fk: r.relationFromFields[0],
+          toField: r.relationToFields?.[0] || getIdField(r.type) || 'id',
+          isRequired: r.isRequired,
+        }))
+
+        // Cache existing values per (targetModel + toField) so we don't query
+        // the same set of ids more than once.
+        const existCache = new Map()
+        async function existsIn(targetModel, toField, value) {
+          if (value === null || value === undefined) return false
+          const key = `${targetModel}|${toField}`
+          let set = existCache.get(key)
+          if (!set) {
+            try {
+              const all = await getDelegate(targetModel).findMany({ select: { [toField]: true } })
+              set = new Set(all.map(r => String(r[toField])))
+            } catch { set = new Set() }
+            existCache.set(key, set)
+          }
+          return set.has(String(value))
+        }
+
+        const stale = []
+        for (const row of rows) {
+          const issues = []
+          for (const side of sides) {
+            const v = row[side.fk]
+            if (v === null || v === undefined) {
+              if (includeNull) issues.push({ ...side, reason: 'null', value: null })
+              continue
+            }
+            const ok = await existsIn(side.targetModel, side.toField, v)
+            if (!ok) issues.push({ ...side, reason: 'orphan', value: v })
+          }
+          if (issues.length > 0) {
+            stale.push({ id: row[idField], idField, fkValues: row, issues })
+          }
+        }
+
+        if (stale.length > 0) {
+          result.push({
+            pivotModel: m.name,
+            idField,
+            sides,
+            stale,
+          })
+        }
+      }
+      res.json({ pivots: result })
+    } catch (err) {
+      res.status(500).json({ error: err.message })
+    }
   })
 
   // ── Pivot view ─────────────────────────────────────────────────────────────

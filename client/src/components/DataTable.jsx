@@ -366,7 +366,17 @@ function ThroughIcon() {
   )
 }
 
-function PivotThroughMenu({ x, y, options, onPick, onClose }) {
+function WarningIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+      <line x1="12" y1="9" x2="12" y2="13"/>
+      <line x1="12" y1="17" x2="12.01" y2="17"/>
+    </svg>
+  )
+}
+
+function PivotThroughMenu({ x, y, options, warnings, onPick, onClose }) {
   useEffect(() => {
     const close = () => onClose()
     const t = setTimeout(() => {
@@ -395,17 +405,22 @@ function PivotThroughMenu({ x, y, options, onPick, onClose }) {
       <div style={{ padding: '6px 10px', fontSize: 10.5, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
         Through pivot to
       </div>
-      {options.map((opt, i) => (
-        <button
-          key={i}
-          type="button"
-          className="context-menu-item"
-          onClick={() => { onPick(opt); onClose() }}
-        >
-          <span className="context-menu-icon"><ThroughIcon /></span>
-          <span>{opt.targetModel}</span>
-        </button>
-      ))}
+      {options.map((opt, i) => {
+        const w = warnings?.find(x => x.option === opt)?.missing
+        return (
+          <button
+            key={i}
+            type="button"
+            className={`context-menu-item ${w ? 'is-warning' : ''}`}
+            onClick={() => { onPick(opt); onClose() }}
+            title={w ? `Some pivot rows have no linked ${opt.targetModel}` : undefined}
+          >
+            <span className="context-menu-icon">{w ? <WarningIcon /> : <ThroughIcon />}</span>
+            <span>{opt.targetModel}</span>
+            {w && <span className="context-menu-item-warning-tag">missing</span>}
+          </button>
+        )
+      })}
     </div>
   )
 }
@@ -436,7 +451,12 @@ export default function DataTable({
 
   const pivotModelSet = new Set(models.filter(m => m.isPivot).map(m => m.name))
 
-  function getPivotOtherSides(targetPivotName) {
+  // Resolve the "other sides" of a pivot relative to the current model + source
+  // relation. We identify "my" rel on the pivot by matching the source field's
+  // relationName — this is the only reliable disambiguation when the pivot is
+  // self-referencing (both sides point at the same model, e.g. A ↔ A via AA).
+  function getPivotOtherSides(sourceField) {
+    const targetPivotName = sourceField?.type
     if (!targetPivotName || !pivotModelSet.has(targetPivotName)) return null
     const pivotSchema = schemaCache[targetPivotName]
     if (!pivotSchema) {
@@ -447,7 +467,9 @@ export default function DataTable({
       f.kind === 'object' && !f.isList && Array.isArray(f.relationFromFields) && f.relationFromFields.length > 0
     )
     if (pivotRels.length < 2) return null
-    const myRel = pivotRels.find(r => r.type === currentModelName)
+    const myRel =
+      (sourceField.relationName && pivotRels.find(r => r.relationName === sourceField.relationName))
+      || pivotRels.find(r => r.type === currentModelName)
     if (!myRel) return null
     return pivotRels
       .filter(r => r !== myRel)
@@ -457,17 +479,59 @@ export default function DataTable({
         fkToCurrent: myRel.relationFromFields[0],
         currentToField: myRel.relationToFields?.[0] || idField || 'id',
         pivotRelToTargetRelationName: r.relationName,
+        pivotOtherFieldName: r.name,
+        pivotOtherFk: r.relationFromFields[0],
       }))
+  }
+
+  // Detect whether a through-jump from a record would yield no actual member
+  // on the other side(s). For single-relation cells the pivot record is fully
+  // included; for list-relation cells the pivot rows include only their FKs.
+  // Returns null when we have no enriched data (so we render no warning), or
+  // an array { option, missing } per other-side option.
+  function getThroughWarnings(field, record, options) {
+    if (!options || options.length === 0) return null
+    if (field.kind !== 'object') return null
+    const value = record[field.name]
+    if (value === undefined || value === null) return null
+
+    if (!field.isList) {
+      // Single relation: pivot record itself, with its other-side single rels
+      // nested. Missing means the nested object is null/undefined.
+      const out = []
+      for (const opt of options) {
+        const sub = value[opt.pivotOtherFieldName]
+        const missing = sub === null || sub === undefined
+        out.push({ option: opt, missing })
+      }
+      return out
+    }
+
+    if (field.isList) {
+      // List relation: pivot rows array with FK columns selected. Missing
+      // means at least one pivot row has the other-side FK as null.
+      if (!Array.isArray(value)) return null
+      const out = []
+      for (const opt of options) {
+        const missing = value.some(row =>
+          row && (row[opt.pivotOtherFk] === null || row[opt.pivotOtherFk] === undefined)
+        )
+        out.push({ option: opt, missing })
+      }
+      return out
+    }
+    return null
   }
 
   function handlePivotThroughClick(e, field, record) {
     e.stopPropagation()
-    const others = getPivotOtherSides(field.type)
+    const others = getPivotOtherSides(field)
     if (!others || others.length === 0) return
     if (others.length === 1) {
       onNavigateThroughPivot?.(others[0], record)
     } else {
-      setPivotMenu({ x: e.clientX, y: e.clientY, options: others, record })
+      const warnings = getThroughWarnings(field, record, others)
+      setPivotMenu({ x: e.clientX, y: e.clientY, options: others, record, warnings })
     }
   }
 
@@ -605,6 +669,9 @@ export default function DataTable({
                       </div>
                     ) : isSingleRelation ? (() => {
                       const targetIsPivot = pivotModelSet.has(field.type)
+                      const throughOpts = targetIsPivot && hasNavTarget ? getPivotOtherSides(field) : null
+                      const throughWarnings = throughOpts ? getThroughWarnings(field, record, throughOpts) : null
+                      const anyMissing = throughWarnings?.some(w => w.missing)
                       return (
                         <div
                           className={`cell ${hasNavTarget ? 'relation-link' : ''}`}
@@ -617,11 +684,13 @@ export default function DataTable({
                             {targetIsPivot && hasNavTarget && (
                               <button
                                 type="button"
-                                className="cell-pivot-through-btn"
+                                className={`cell-pivot-through-btn ${anyMissing ? 'is-warning' : ''}`}
                                 onClick={e => handlePivotThroughClick(e, field, record)}
-                                title={`Jump through ${field.type} pivot`}
+                                title={anyMissing
+                                  ? `Jump through ${field.type} pivot — linked record is missing`
+                                  : `Jump through ${field.type} pivot`}
                               >
-                                <ThroughIcon />
+                                {anyMissing ? <WarningIcon /> : <ThroughIcon />}
                               </button>
                             )}
                           </span>
@@ -644,6 +713,9 @@ export default function DataTable({
                           : undefined
                       const isObjectList = field.kind === 'object' && field.isList
                       const targetIsPivot = isObjectList && pivotModelSet.has(field.type) && hasNavTarget
+                      const throughOpts = targetIsPivot ? getPivotOtherSides(field) : null
+                      const throughWarnings = throughOpts ? getThroughWarnings(field, record, throughOpts) : null
+                      const anyMissing = throughWarnings?.some(w => w.missing)
                       return (
                         <div
                           className={`cell ${clickable ? '' : 'readonly'} ${hasNavTarget ? 'relation-link' : ''}`}
@@ -656,11 +728,13 @@ export default function DataTable({
                             {targetIsPivot && (
                               <button
                                 type="button"
-                                className="cell-pivot-through-btn"
+                                className={`cell-pivot-through-btn ${anyMissing ? 'is-warning' : ''}`}
                                 onClick={e => handlePivotThroughClick(e, field, record)}
-                                title={`Jump through ${field.type} pivot`}
+                                title={anyMissing
+                                  ? `Jump through ${field.type} pivot — some rows have no linked member`
+                                  : `Jump through ${field.type} pivot`}
                               >
-                                <ThroughIcon />
+                                {anyMissing ? <WarningIcon /> : <ThroughIcon />}
                               </button>
                             )}
                           </span>
@@ -722,6 +796,7 @@ export default function DataTable({
         x={pivotMenu.x}
         y={pivotMenu.y}
         options={pivotMenu.options}
+        warnings={pivotMenu.warnings}
         onPick={opt => onNavigateThroughPivot?.(opt, pivotMenu.record)}
         onClose={() => setPivotMenu(null)}
       />

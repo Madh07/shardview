@@ -10,6 +10,7 @@ import PivotView from './components/PivotView.jsx'
 import ConfirmDeleteModal from './components/ConfirmDeleteModal.jsx'
 import MassEditModal from './components/MassEditModal.jsx'
 import ExportQueryModal from './components/ExportQueryModal.jsx'
+import StalePivotsModal from './components/StalePivotsModal.jsx'
 
 const PAGE_SIZES = [10, 20, 50, 100]
 
@@ -156,6 +157,7 @@ export default function App() {
   const [deleteRequest, setDeleteRequest] = useState(null)  // { kind: 'row'|'bulk', ids: [], busy }
   const [massEditOpen, setMassEditOpen] = useState(false)
   const [massEditSaving, setMassEditSaving] = useState(false)
+  const [stalePivotsOpen, setStalePivotsOpen] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
 
   const searchTimer = useRef(null)
@@ -653,6 +655,7 @@ export default function App() {
         pinnedModels={pinnedModels}
         onTogglePin={togglePin}
         onReorderPinned={reorderPinned}
+        onFindStalePivots={() => setStalePivotsOpen(true)}
       />
 
       <div className="main">
@@ -795,6 +798,16 @@ export default function App() {
           page={activeTab.page}
           pageSize={activeTab.pageSize}
           onClose={() => setExportOpen(false)}
+        />
+      )}
+
+      {stalePivotsOpen && (
+        <StalePivotsModal
+          onClose={() => setStalePivotsOpen(false)}
+          onJump={(pivotModel, idField, id) => {
+            setStalePivotsOpen(false)
+            openTab(pivotModel, [{ path: [idField], op: 'equals', value: String(id) }], { newTab: true })
+          }}
         />
       )}
 

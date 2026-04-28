@@ -36,4 +36,8 @@ export const api = {
     return req('GET', `/pivot/${pivotModel}${q ? `?${q}` : ''}`)
   },
   syncPivot: (pivotModel, body) => req('POST', `/pivot/${pivotModel}/sync`, body),
+  getStalePivots: (opts = {}) => {
+    const q = opts.includeNull ? '?includeNull=true' : ''
+    return req('GET', `/stale-pivots${q}`)
+  },
 }
