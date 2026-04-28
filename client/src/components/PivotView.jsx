@@ -231,7 +231,34 @@ function recordLabel(r) {
   return null
 }
 
-export default function PivotView({ pivotModel, mode = 'joined', onToast }) {
+export default function PivotView({ pivotModel, mode = 'joined', onToast, viewLayout = 'table', docLabelWidth = 180, onSetDocLabelWidth }) {
+  const [expandedRow, setExpandedRow] = useState(null)
+  useEffect(() => {
+    if (expandedRow === null) return
+    function onKey(e) { if (e.key === 'Escape') setExpandedRow(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [expandedRow])
+  function startLabelResize(e) {
+    e.preventDefault()
+    e.stopPropagation()
+    const startX = e.clientX
+    const startW = docLabelWidth
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+    function onMove(ev) {
+      const next = Math.max(80, Math.min(600, startW + (ev.clientX - startX)))
+      onSetDocLabelWidth?.(next)
+    }
+    function onUp() {
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(false)
   const [page, setPage] = useState(1)
@@ -329,6 +356,96 @@ export default function PivotView({ pivotModel, mode = 'joined', onToast }) {
       <div className="pivot-view-body">
         {data.rows.length === 0 ? (
           <div className="pivot-view-empty"><p>No connections to show.</p></div>
+        ) : mode === 'joined' && viewLayout === 'document' ? (
+          <div className={`doc-list pivot-doc-list ${expandedRow !== null ? 'has-expanded' : ''}`} style={{ '--doc-label-width': docLabelWidth + 'px' }}>
+            {expandedRow !== null && (
+              <div className="pivot-doc-backdrop" onClick={() => setExpandedRow(null)} />
+            )}
+            {data.rows.map((row, i) => (
+              <div className={`doc-card pivot-doc-card ${expandedRow === i ? 'is-expanded' : ''}`} key={i}>
+                <div className="pivot-doc-card-toolbar">
+                  <button
+                    type="button"
+                    className="pivot-doc-expand-btn"
+                    onClick={() => setExpandedRow(expandedRow === i ? null : i)}
+                    title={expandedRow === i ? 'Collapse' : 'Expand to fullscreen'}
+                  >
+                    {expandedRow === i ? (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M4 14h6v6"/><path d="M20 10h-6V4"/>
+                        <path d="M14 10l7-7"/><path d="M3 21l7-7"/>
+                      </svg>
+                    ) : (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M15 3h6v6"/><path d="M9 21H3v-6"/>
+                        <path d="M21 3l-7 7"/><path d="M3 21l7-7"/>
+                      </svg>
+                    )}
+                  </button>
+                </div>
+                <div className="pivot-doc-sides">
+                {sides.map((side, sIdx) => {
+                  const rec = row[side.relName]
+                  const palette = sidePalette(sIdx)
+                  const sideId = rec ? rec[side.idField] : null
+                  const label = recordLabel(rec)
+                  return (
+                    <Fragment key={sIdx}>
+                    {sIdx > 0 && (
+                      <div className="pivot-doc-link" aria-hidden>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M3 12h18"/><path d="M7 6l-4 6 4 6"/><path d="M17 6l4 6-4 6"/>
+                        </svg>
+                      </div>
+                    )}
+                    <div
+                      className="pivot-doc-side"
+                      style={{ borderTop: `3px solid ${palette.hex}` }}
+                    >
+                      <div
+                        className="pivot-doc-side-head"
+                        style={{ background: palette.headerBg, color: palette.hex }}
+                      >
+                        <span className="pivot-doc-side-model">{side.model}</span>
+                        {sideId !== null && sideId !== undefined && (
+                          <span className="pivot-doc-side-id">#{String(sideId)}</span>
+                        )}
+                        {label && <span className="pivot-doc-side-label">{label}</span>}
+                      </div>
+                      <div className="doc-card-body">
+                        {side.fields.filter(f => !f.isId).map(f => (
+                          <div key={f.name} className="doc-row">
+                            <span className="doc-row-label" title={f.type + (f.isList ? '[]' : '')}>
+                              {f.name}
+                              {onSetDocLabelWidth && (
+                                <span
+                                  className="doc-row-label-resizer"
+                                  onMouseDown={startLabelResize}
+                                  title="Drag to resize"
+                                />
+                              )}
+                            </span>
+                            <span className="doc-row-value">
+                              <EditableCell
+                                record={rec}
+                                field={{ ...f, idFieldOnSide: side.idField }}
+                                modelName={side.model}
+                                onUpdated={updated => handleSideRecordUpdated(sIdx, updated)}
+                                onError={onToast}
+                                onRefetch={load}
+                              />
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    </Fragment>
+                  )
+                })}
+                </div>
+              </div>
+            ))}
+          </div>
         ) : mode === 'cards' ? (
           <div className="pivot-cards">
             {data.rows.map((row, i) => (

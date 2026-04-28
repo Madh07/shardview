@@ -14,6 +14,8 @@ export default function Toolbar({
   pivotMode,
   onCyclePivotMode,
   onEditSelected,
+  onReload,
+  reloading,
 }) {
   const pivotLabels = { off: 'Pivot view', joined: 'Pivot: joined', cards: 'Pivot: cards' }
   const pivotIsOn = pivotMode && pivotMode !== 'off'
@@ -57,6 +59,23 @@ export default function Toolbar({
             <path d="M15 18H9a3 3 0 0 1-3-3V9"/>
           </svg>
           {pivotLabels[pivotMode || 'off']}
+        </button>
+      )}
+
+      {onReload && (
+        <button
+          className={`toolbar-filter-btn ${reloading ? 'is-spinning' : ''}`}
+          onClick={onReload}
+          title="Reload schema and records"
+          disabled={reloading}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 12a9 9 0 0 1 15.5-6.36L21 8"/>
+            <path d="M21 3v5h-5"/>
+            <path d="M21 12a9 9 0 0 1-15.5 6.36L3 16"/>
+            <path d="M3 21v-5h5"/>
+          </svg>
+          Reload
         </button>
       )}
 

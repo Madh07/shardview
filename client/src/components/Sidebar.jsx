@@ -100,8 +100,13 @@ export default function Sidebar({
   onFindStalePivots,
   pivotOverrides = [],
   onTogglePivotOverride,
+  viewLayout = 'table',
+  onToggleViewLayout,
+  autoReloadSeconds = 0,
+  onSetAutoReload,
 }) {
   const [menu, setMenu] = useState(null)  // { x, y, model }
+  const [autoReloadMenu, setAutoReloadMenu] = useState(null)  // { x, y }
   const [pinDragName, setPinDragName] = useState(null)
   const [pinDragOverName, setPinDragOverName] = useState(null)
 
@@ -226,6 +231,45 @@ export default function Sidebar({
           <span className="sidebar-logo-title">ShardView</span>
           <span className="sidebar-logo-subtitle">Database Browser</span>
         </div>
+        {onSetAutoReload && (
+          <button
+            type="button"
+            className={`theme-toggle-btn ${autoReloadSeconds > 0 ? 'is-on' : ''}`}
+            onClick={e => {
+              const r = e.currentTarget.getBoundingClientRect()
+              setAutoReloadMenu({ x: r.left, y: r.bottom + 4 })
+            }}
+            title={autoReloadSeconds > 0
+              ? `Auto-reload every ${autoReloadSeconds}s — click to change`
+              : 'Auto-reload off — click to enable'}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="9"/>
+              <polyline points="12 7 12 12 15 14"/>
+            </svg>
+          </button>
+        )}
+        {onToggleViewLayout && (
+          <button
+            type="button"
+            className="theme-toggle-btn"
+            onClick={onToggleViewLayout}
+            title={viewLayout === 'document' ? 'Switch to table view' : 'Switch to document view'}
+          >
+            {viewLayout === 'document' ? (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                <path d="M3 9h18M3 15h18M9 3v18M15 3v18"/>
+              </svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="4" y="3" width="16" height="6" rx="1"/>
+                <rect x="4" y="11" width="16" height="4" rx="1"/>
+                <rect x="4" y="17" width="16" height="4" rx="1"/>
+              </svg>
+            )}
+          </button>
+        )}
         <button
           type="button"
           className="theme-toggle-btn"
@@ -314,6 +358,32 @@ export default function Sidebar({
           className="sidebar-resizer"
           onMouseDown={onResizeStart}
           title="Drag to resize"
+        />
+      )}
+
+      {autoReloadMenu && (
+        <ContextMenu
+          x={autoReloadMenu.x}
+          y={autoReloadMenu.y}
+          onClose={() => setAutoReloadMenu(null)}
+          items={[
+            { label: 'Off', onClick: () => onSetAutoReload?.(0) },
+            { label: 'Every 5s', onClick: () => onSetAutoReload?.(5) },
+            { label: 'Every 10s', onClick: () => onSetAutoReload?.(10) },
+            { label: 'Every 30s', onClick: () => onSetAutoReload?.(30) },
+            { label: 'Every 60s', onClick: () => onSetAutoReload?.(60) },
+            { label: 'Every 5 min', onClick: () => onSetAutoReload?.(300) },
+          ].map(item => ({
+            ...item,
+            icon: (autoReloadSeconds === 0 && item.label === 'Off') ||
+                  (autoReloadSeconds > 0 && item.label !== 'Off' && parseInt(item.label.match(/\d+/)?.[0]) === (item.label.includes('min') ? autoReloadSeconds / 60 : autoReloadSeconds))
+              ? (
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+              )
+              : <span style={{ width: 12, height: 12, display: 'inline-block' }} />,
+          }))}
         />
       )}
 

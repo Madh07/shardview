@@ -157,6 +157,22 @@ export default function App() {
       return Array.isArray(v) ? v : []
     } catch { return [] }
   })
+  const [viewLayout, setViewLayout] = useState(() => {
+    const v = localStorage.getItem('viewLayout')
+    return v === 'document' ? 'document' : 'table'
+  })
+  useEffect(() => { localStorage.setItem('viewLayout', viewLayout) }, [viewLayout])
+  const [autoReloadSeconds, setAutoReloadSeconds] = useState(() => {
+    const v = parseInt(localStorage.getItem('autoReloadSeconds') || '0', 10)
+    return Number.isFinite(v) && v >= 0 ? v : 0
+  })
+  useEffect(() => { localStorage.setItem('autoReloadSeconds', String(autoReloadSeconds)) }, [autoReloadSeconds])
+  const [reloading, setReloading] = useState(false)
+  const [docLabelWidth, setDocLabelWidth] = useState(() => {
+    const v = parseInt(localStorage.getItem('docLabelWidth') || '', 10)
+    return Number.isFinite(v) && v >= 80 && v <= 600 ? v : 180
+  })
+  useEffect(() => { localStorage.setItem('docLabelWidth', String(docLabelWidth)) }, [docLabelWidth])
   const [addModalOpen, setAddModalOpen] = useState(false)
   const [duplicateSource, setDuplicateSource] = useState(null)  // { values } pre-fill for AddRecordModal
   const [saving, setSaving] = useState(false)
@@ -200,6 +216,40 @@ export default function App() {
     // Re-fetch models so badges reflect the override immediately.
     loadModels()
   }, [pivotOverrides])
+
+  async function handleReload() {
+    if (!activeTab) return
+    setReloading(true)
+    try {
+      // Drop the cached schema so a fresh one is fetched (covers edits to
+      // schema.prisma since the server boot — schema endpoint reparses on
+      // each request).
+      setSchemaCache(prev => {
+        const next = { ...prev }
+        delete next[activeTab.modelName]
+        return next
+      })
+      patchTab(activeTab.id, { schema: null })
+      await loadModels()
+      const fresh = await api.getSchema(activeTab.modelName)
+      setSchemaCache(prev => ({ ...prev, [activeTab.modelName]: fresh }))
+      patchTab(activeTab.id, { schema: fresh })
+      await fetchRecords(activeTab.id)
+    } catch (err) {
+      showToast('Reload failed: ' + err.message)
+    } finally {
+      setReloading(false)
+    }
+  }
+
+  // Auto-reload records (not schema) on a configurable interval.
+  useEffect(() => {
+    if (!autoReloadSeconds || !activeTab?.id || !activeTab?.schema) return
+    const tabId = activeTab.id
+    const t = setInterval(() => { fetchRecords(tabId) }, autoReloadSeconds * 1000)
+    return () => clearInterval(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoReloadSeconds, activeTab?.id, activeTab?.schema])
 
   function togglePivotOverride(name) {
     setPivotOverridesState(prev =>
@@ -696,6 +746,10 @@ export default function App() {
         onFindStalePivots={() => setStalePivotsOpen(true)}
         pivotOverrides={pivotOverrides}
         onTogglePivotOverride={togglePivotOverride}
+        viewLayout={viewLayout}
+        onToggleViewLayout={() => setViewLayout(v => v === 'document' ? 'table' : 'document')}
+        autoReloadSeconds={autoReloadSeconds}
+        onSetAutoReload={setAutoReloadSeconds}
       />
 
       <div className="main">
@@ -739,6 +793,8 @@ export default function App() {
                 return { pivotMode: order[(cur + 1) % order.length] }
               })}
               onEditSelected={() => setMassEditOpen(true)}
+              onReload={handleReload}
+              reloading={reloading}
             />
 
             {(activeTab.pivotMode && activeTab.pivotMode !== 'off') && isPivot ? (
@@ -746,6 +802,9 @@ export default function App() {
                 pivotModel={activeTab.modelName}
                 mode={activeTab.pivotMode}
                 onToast={(m, t) => showToast(m, t || 'error')}
+                viewLayout={viewLayout}
+                docLabelWidth={docLabelWidth}
+                onSetDocLabelWidth={setDocLabelWidth}
               />
             ) : (
               <>
@@ -799,6 +858,9 @@ export default function App() {
                   ensureSchema={ensureSchema}
                   currentModelName={activeTab.modelName}
                   onNavigateThroughPivot={navigateThroughPivot}
+                  layout={viewLayout}
+                  docLabelWidth={docLabelWidth}
+                  onSetDocLabelWidth={setDocLabelWidth}
                 />
               ) : null}
             </div>

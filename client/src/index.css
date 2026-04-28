@@ -393,6 +393,9 @@ input, select, textarea {
   flex-shrink: 0;
   transition: all 0.12s;
 }
+.theme-toggle-btn ~ .theme-toggle-btn {
+  margin-left: 4px;
+}
 .theme-toggle-btn:hover { color: var(--sidebar-text); border-color: var(--border-dark); background: var(--sidebar-hover); }
 
 .sidebar-search {
@@ -948,14 +951,28 @@ input, select, textarea {
 
 /* ─── Toolbar ─── */
 .toolbar {
-  height: var(--header-height);
+  min-height: var(--header-height);
   background: var(--surface);
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  row-gap: 6px;
   gap: 8px;
-  padding: 0 16px;
+  padding: 8px 16px;
   flex-shrink: 0;
+}
+
+.toolbar-search { min-width: 140px; }
+
+@media (max-width: 900px) {
+  .toolbar { padding: 8px 12px; }
+  .toolbar-sep { flex: 0 1 auto; }
+  .toolbar-search { flex: 1 1 160px; min-width: 120px; width: auto; }
+}
+
+@media (max-width: 640px) {
+  .toolbar-count { display: none; }
 }
 
 .toolbar-model-name {
@@ -1949,3 +1966,372 @@ input, select, textarea {
 
 .bool-toggle.on .bool-toggle-thumb { left: 16px; }
 .bool-toggle.off .bool-toggle-thumb { left: 2px; }
+
+/* ─── Document view (MongoDB Compass-style vertical cards) ─── */
+.doc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+}
+
+.doc-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+.doc-card:hover { border-color: var(--border-strong, #d1d5db); }
+.doc-card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.doc-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.doc-card-id-label {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.doc-card-id-value {
+  color: var(--accent);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+
+.doc-card-body {
+  display: flex;
+  flex-direction: column;
+  padding: 2px 10px 4px 10px;
+}
+
+.doc-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+}
+
+.doc-row:not(:last-child) {
+  border-bottom: 1px dashed var(--border);
+}
+
+.doc-row-label {
+  flex: 0 0 var(--doc-label-width, 180px);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 600;
+  padding: 2px 14px 2px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  position: relative;
+}
+
+.doc-row-label-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 10px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 2;
+  background: transparent;
+}
+.doc-row-label-resizer::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  right: 4px;
+  width: 2px;
+  background: var(--border);
+  border-radius: 1px;
+  transition: background 0.12s, width 0.12s;
+}
+.doc-row-label-resizer:hover::before,
+.doc-row-label-resizer:active::before {
+  background: var(--accent);
+  width: 3px;
+}
+
+.doc-row-label::after {
+  content: ":";
+  color: var(--text-muted);
+  font-weight: 400;
+  margin-left: 1px;
+}
+
+.doc-row-value {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.doc-row-value > .cell {
+  padding: 1px 6px;
+  border-radius: 4px;
+  width: 100%;
+  min-height: 20px;
+}
+
+.doc-row-value > .cell:hover:not(.readonly) {
+  background: var(--row-hover);
+}
+
+
+.theme-toggle-btn.is-on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+
+@keyframes shardview-spin { to { transform: rotate(360deg); } }
+.toolbar-filter-btn.is-spinning svg { animation: shardview-spin 0.8s linear infinite; }
+
+.doc-list-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.doc-list-header-label {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Pivot joined view in document layout — sides side-by-side */
+.pivot-doc-card { padding: 0; }
+.pivot-doc-sides {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  overflow-x: auto;
+}
+.pivot-doc-side {
+  flex: 1 1 0;
+  min-width: 280px;
+  display: flex;
+  flex-direction: column;
+}
+.pivot-doc-link {
+  flex: 0 0 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  border-left: 1px dashed var(--border);
+  border-right: 1px dashed var(--border);
+  background: var(--bg);
+}
+.pivot-doc-side-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.pivot-doc-side-model { font-weight: 700; }
+.pivot-doc-side-id {
+  opacity: 0.75;
+  font-weight: 500;
+}
+.pivot-doc-side-label {
+  margin-left: auto;
+  font-weight: 400;
+  font-style: italic;
+  opacity: 0.85;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60%;
+}
+.pivot-doc-side .doc-card-body { padding: 2px 10px 4px 10px; }
+.pivot-doc-side .doc-row-label { flex-basis: var(--doc-label-width, 130px); }
+.pivot-doc-side .pivot-cell {
+  padding: 1px 6px;
+  border-radius: 4px;
+  width: 100%;
+  min-height: 20px;
+  display: flex;
+  align-items: center;
+}
+.pivot-doc-side .pivot-cell.editable:hover { background: var(--row-hover); }
+
+@media (max-width: 900px) {
+  .pivot-doc-sides { flex-direction: column; }
+  .pivot-doc-side { min-width: 0; }
+  .pivot-doc-link {
+    border-left: none;
+    border-right: none;
+    border-top: 1px dashed var(--border);
+    border-bottom: 1px dashed var(--border);
+    flex: 0 0 28px;
+    transform: rotate(90deg);
+  }
+}
+
+/* Pivot joined doc card — expand to fullscreen */
+.pivot-doc-card { position: relative; }
+.pivot-doc-card-toolbar {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 3;
+  display: flex;
+  gap: 4px;
+}
+.pivot-doc-expand-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.pivot-doc-expand-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.pivot-doc-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--overlay);
+  z-index: 199;
+}
+
+.pivot-doc-card.is-expanded {
+  position: fixed;
+  inset: 24px;
+  z-index: 200;
+  background: var(--surface);
+  box-shadow: var(--shadow-modal);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.pivot-doc-card.is-expanded .pivot-doc-sides {
+  flex: 1;
+  overflow: auto;
+}
+.pivot-doc-card.is-expanded .pivot-doc-side {
+  min-width: 360px;
+}
+
+/* Hard cap on column width so long fields (message body, hashes, etc.)
+   never blow up the layout. Cells already truncate via .cell overflow:hidden;
+   inner text spans get explicit ellipsis. */
+.data-table th,
+.data-table td {
+  max-width: 320px;
+}
+.data-table td .cell .cell-string,
+.data-table td .cell .cell-id,
+.data-table td .cell .cell-relation,
+.data-table td .cell .cell-date,
+.data-table td .cell .cell-number {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+
+/* Textarea (full-text) edit modal */
+.textarea-edit-frame {
+  display: flex;
+  align-items: stretch;
+  height: 60vh;
+  max-height: 560px;
+  min-height: 240px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.textarea-edit-gutter {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 12px 8px 12px 12px;
+  background: var(--bg);
+  color: var(--text-muted);
+  border-right: 1px solid var(--border);
+  text-align: right;
+  user-select: none;
+  overflow: hidden;
+  white-space: pre;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  min-width: 36px;
+}
+.textarea-edit-input {
+  flex: 1 1 auto;
+  width: 100%;
+  border: none;
+  outline: none;
+  resize: none;
+  padding: 12px 14px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  white-space: pre;
+  overflow: auto;
+  tab-size: 2;
+}
+.textarea-edit-frame.is-wrap .textarea-edit-input {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.textarea-edit-frame {
+  position: relative;
+}
+.textarea-edit-mirror {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+  top: 0;
+  left: 0;
+  padding: 12px 14px;
+  box-sizing: border-box;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  tab-size: 2;
+}
