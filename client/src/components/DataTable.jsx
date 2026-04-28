@@ -201,16 +201,36 @@ function CellEditor({ field, value, onSave, onCancel }) {
   }
 
   if (field.type === 'DateTime') {
+    function setNow() {
+      const d = new Date()
+      const pad = n => String(n).padStart(2, '0')
+      const next = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+      setVal(next)
+      // Save immediately so the user sees the change persist without having
+      // to also tab through the input.
+      onSave(new Date(next).toISOString())
+    }
     return (
-      <input
-        ref={inputRef}
-        type="datetime-local"
-        className="cell-edit-input"
-        value={val}
-        onChange={e => setVal(e.target.value)}
-        onBlur={commit}
-        onKeyDown={handleKeyDown}
-      />
+      <span className="cell-edit-datetime">
+        <input
+          ref={inputRef}
+          type="datetime-local"
+          className="cell-edit-input"
+          value={val}
+          onChange={e => setVal(e.target.value)}
+          onBlur={commit}
+          onKeyDown={handleKeyDown}
+        />
+        <button
+          type="button"
+          className="cell-edit-now-btn"
+          // mousedown beats the input's blur → commit, so the click registers
+          onMouseDown={e => { e.preventDefault(); setNow() }}
+          title="Set to current date and time"
+        >
+          Now
+        </button>
+      </span>
     )
   }
 
@@ -376,6 +396,47 @@ function WarningIcon() {
   )
 }
 
+function RowContextMenu({ x, y, items, onClose }) {
+  useEffect(() => {
+    const close = () => onClose()
+    const t = setTimeout(() => {
+      document.addEventListener('mousedown', close)
+      document.addEventListener('contextmenu', close)
+    }, 0)
+    function onKey(e) { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      clearTimeout(t)
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('contextmenu', close)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [onClose])
+  const margin = 8
+  const W = 200, H = items.length * 32 + 8
+  const left = Math.min(x, window.innerWidth - W - margin)
+  const top = Math.min(y, window.innerHeight - H - margin)
+  return (
+    <div
+      className="context-menu"
+      style={{ left, top }}
+      onMouseDown={e => e.stopPropagation()}
+    >
+      {items.map((item, i) => (
+        <button
+          key={i}
+          type="button"
+          className={`context-menu-item ${item.danger ? 'is-danger' : ''}`}
+          onClick={() => { item.onClick(); onClose() }}
+        >
+          {item.icon && <span className="context-menu-icon">{item.icon}</span>}
+          <span>{item.label}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function PivotThroughMenu({ x, y, options, warnings, onPick, onClose }) {
   useEffect(() => {
     const close = () => onClose()
@@ -434,6 +495,7 @@ export default function DataTable({
   onToggleAll,
   onUpdateCell,
   onDeleteRow,
+  onDuplicateRow,
   orderBy,
   orderDir,
   onSort,
@@ -448,6 +510,7 @@ export default function DataTable({
   const [pickerCell, setPickerCell] = useState(null)   // { record, field } for single relations
   const [listCell, setListCell] = useState(null)       // { record, field } for scalar lists
   const [pivotMenu, setPivotMenu] = useState(null)     // { x, y, options, record }
+  const [rowMenu, setRowMenu] = useState(null)         // { x, y, record }
 
   const pivotModelSet = new Set(models.filter(m => m.isPivot).map(m => m.name))
 
@@ -604,7 +667,7 @@ export default function DataTable({
               </div>
             </th>
           ))}
-          <th style={{ width: 44 }} />
+          <th style={{ width: 80 }} />
         </tr>
       </thead>
       <tbody>
@@ -612,7 +675,17 @@ export default function DataTable({
           const id = String(getIdValue(record, idField))
           const isSelected = selectedRows.has(id)
           return (
-            <tr key={id} className={isSelected ? 'selected' : ''}>
+            <tr
+              key={id}
+              className={isSelected ? 'selected' : ''}
+              onContextMenu={e => {
+                // Don't hijack the right-click on inputs / editors.
+                const tag = e.target?.tagName
+                if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+                e.preventDefault()
+                setRowMenu({ x: e.clientX, y: e.clientY, record })
+              }}
+            >
               <td className="td-center">
                 <input
                   type="checkbox"
@@ -745,27 +818,52 @@ export default function DataTable({
                 )
               })}
               <td className="td-center">
-                <button
-                  title="Delete row"
-                  onClick={() => onDeleteRow(getIdValue(record, idField))}
-                  style={{
-                    background: 'none',
-                    border: 'none',
-                    color: '#D1D1D6',
-                    cursor: 'pointer',
-                    padding: '4px',
-                    borderRadius: 4,
-                    display: 'flex',
-                    alignItems: 'center',
-                  }}
-                  onMouseEnter={e => e.currentTarget.style.color = '#FF3B30'}
-                  onMouseLeave={e => e.currentTarget.style.color = '#D1D1D6'}
-                >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <polyline points="3 6 5 6 21 6"/>
-                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
-                  </svg>
-                </button>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                  {onDuplicateRow && (
+                    <button
+                      title="Duplicate row"
+                      onClick={() => onDuplicateRow(record)}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#D1D1D6',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        borderRadius: 4,
+                        display: 'flex',
+                        alignItems: 'center',
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.color = '#0A84FF'}
+                      onMouseLeave={e => e.currentTarget.style.color = '#D1D1D6'}
+                    >
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                      </svg>
+                    </button>
+                  )}
+                  <button
+                    title="Delete row"
+                    onClick={() => onDeleteRow(getIdValue(record, idField))}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: '#D1D1D6',
+                      cursor: 'pointer',
+                      padding: '4px',
+                      borderRadius: 4,
+                      display: 'flex',
+                      alignItems: 'center',
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.color = '#FF3B30'}
+                    onMouseLeave={e => e.currentTarget.style.color = '#D1D1D6'}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polyline points="3 6 5 6 21 6"/>
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                    </svg>
+                  </button>
+                </div>
               </td>
             </tr>
           )
@@ -788,6 +886,37 @@ export default function DataTable({
         value={listCell.record[listCell.field.name]}
         onSave={handleSaveList}
         onClose={() => setListCell(null)}
+      />
+    )}
+
+    {rowMenu && (
+      <RowContextMenu
+        x={rowMenu.x}
+        y={rowMenu.y}
+        onClose={() => setRowMenu(null)}
+        items={[
+          ...(onDuplicateRow ? [{
+            label: 'Duplicate row',
+            icon: (
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+              </svg>
+            ),
+            onClick: () => onDuplicateRow(rowMenu.record),
+          }] : []),
+          {
+            label: 'Delete row',
+            danger: true,
+            icon: (
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+              </svg>
+            ),
+            onClick: () => onDeleteRow(getIdValue(rowMenu.record, idField)),
+          },
+        ]}
       />
     )}
 

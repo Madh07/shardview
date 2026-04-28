@@ -69,7 +69,6 @@ export default function Toolbar({
           <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
         </svg>
         Filter
-        {filterActive && <span style={{ fontSize: 10, background: '#5664d2', color: 'white', borderRadius: '50%', width: 16, height: 16, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>•</span>}
       </button>
 
       {selectedCount > 0 && (

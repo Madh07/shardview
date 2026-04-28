@@ -152,6 +152,7 @@ export default function App() {
     } catch { return [] }
   })
   const [addModalOpen, setAddModalOpen] = useState(false)
+  const [duplicateSource, setDuplicateSource] = useState(null)  // { values } pre-fill for AddRecordModal
   const [saving, setSaving] = useState(false)
   const [toast, setToast] = useState(null)
   const [deleteRequest, setDeleteRequest] = useState(null)  // { kind: 'row'|'bulk', ids: [], busy }
@@ -574,6 +575,7 @@ export default function App() {
     try {
       await api.createRecord(activeTab.modelName, data)
       setAddModalOpen(false)
+      setDuplicateSource(null)
       await fetchRecords(activeTab.id)
       await loadModels()
       showToast('Record created', 'success')
@@ -582,6 +584,15 @@ export default function App() {
     } finally {
       setSaving(false)
     }
+  }
+
+  // Open the Add modal pre-filled from an existing row. We pass the raw record
+  // straight through; AddRecordModal handles type coercion + skipping auto
+  // fields (id/@default(now())/etc.) so we never carry the source row's PK.
+  function handleDuplicateRow(record) {
+    if (!activeTab) return
+    setDuplicateSource({ values: record })
+    setAddModalOpen(true)
   }
 
   function toggleRow(id) {
@@ -749,6 +760,7 @@ export default function App() {
                   onToggleAll={toggleAll}
                   onUpdateCell={handleUpdateCell}
                   onDeleteRow={handleDeleteRow}
+                  onDuplicateRow={handleDuplicateRow}
                   orderBy={activeTab.orderBy}
                   orderDir={activeTab.orderDir}
                   onSort={handleSort}
@@ -780,8 +792,10 @@ export default function App() {
           modelName={activeTab.modelName}
           fields={activeTab.schema.fields}
           onSubmit={handleAddRecord}
-          onClose={() => setAddModalOpen(false)}
+          onClose={() => { setAddModalOpen(false); setDuplicateSource(null) }}
           saving={saving}
+          initialValues={duplicateSource?.values || null}
+          title={duplicateSource ? `Duplicate row in ${activeTab.modelName}` : undefined}
         />
       )}
 

@@ -1371,6 +1371,12 @@ input, select, textarea {
 }
 .context-menu-item.is-warning .context-menu-icon { color: #b45309; }
 [data-theme="dark"] .context-menu-item.is-warning .context-menu-icon { color: #fbbf24; }
+.context-menu-item.is-danger { color: #b91c1c; }
+.context-menu-item.is-danger .context-menu-icon { color: #b91c1c; }
+.context-menu-item.is-danger:hover { background: rgba(255,59,48,0.1); }
+[data-theme="dark"] .context-menu-item.is-danger { color: #f87171; }
+[data-theme="dark"] .context-menu-item.is-danger .context-menu-icon { color: #f87171; }
+[data-theme="dark"] .context-menu-item.is-danger:hover { background: rgba(248,113,113,0.15); }
 .context-menu-item-warning-tag {
   margin-left: auto;
   font-size: 10px;
@@ -1453,6 +1459,27 @@ input, select, textarea {
   color: var(--text);
   font-size: 13px;
 }
+
+.cell-edit-datetime {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 4px;
+  width: 100%;
+}
+.cell-edit-datetime .cell-edit-input { flex: 1; min-width: 0; }
+.cell-edit-now-btn {
+  background: var(--surface-alt);
+  border: 1.5px solid var(--accent);
+  border-radius: 6px;
+  color: var(--accent);
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+}
+.cell-edit-now-btn:hover { background: var(--accent); color: white; }
 
 /* ─── Checkbox ─── */
 .checkbox {
@@ -1669,6 +1696,113 @@ input, select, textarea {
 }
 
 .form-required { color: var(--error); margin-left: 2px; }
+.form-default-hint {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-family: 'SF Mono', ui-monospace, monospace;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.form-default-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(10, 132, 255, 0.12);
+  color: #0A84FF;
+  border: 1px solid rgba(10, 132, 255, 0.28);
+}
+[data-theme="dark"] .form-default-badge {
+  background: rgba(10, 132, 255, 0.18);
+  color: #5AC8FA;
+  border-color: rgba(90, 200, 250, 0.32);
+}
+.form-default-badge-literal {
+  background: rgba(120, 120, 128, 0.16);
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+[data-theme="dark"] .form-default-badge-literal {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+
+/* Field-level accent — a left bar + tinted background so users see at a
+   glance that this field has an overridable default. */
+.form-field.has-fn-default {
+  position: relative;
+  padding-left: 10px;
+  border-left: 3px solid #0A84FF;
+  background: rgba(10, 132, 255, 0.04);
+  border-radius: 4px;
+}
+[data-theme="dark"] .form-field.has-fn-default {
+  border-left-color: #5AC8FA;
+  background: rgba(10, 132, 255, 0.08);
+}
+.form-field.has-fn-default .form-input,
+.form-field.has-fn-default .form-select {
+  border-color: rgba(10, 132, 255, 0.35);
+}
+[data-theme="dark"] .form-field.has-fn-default .form-input,
+[data-theme="dark"] .form-field.has-fn-default .form-select {
+  border-color: rgba(90, 200, 250, 0.35);
+}
+.form-field.has-literal-default {
+  padding-left: 10px;
+  border-left: 3px solid var(--text-muted);
+  border-radius: 4px;
+}
+
+.form-datetime-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+.form-datetime-row .form-input { flex: 1; min-width: 0; }
+.form-datetime-now {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.form-datetime-now:hover {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+.form-datetime-clear {
+  width: 30px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.form-datetime-clear:hover {
+  background: rgba(255,59,48,0.1);
+  color: var(--error);
+}
 
 .form-input, .form-select, .form-textarea {
   height: 34px;

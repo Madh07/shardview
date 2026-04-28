@@ -1,18 +1,43 @@
 import { useState } from 'react'
 import RelationPickerTable from './RelationPickerTable.jsx'
 
+// Function-style defaults (DMMF wraps them as { name, args }). Used both to
+// hide truly-generated fields (id with autoincrement/sequence) and to render
+// a hint placeholder on the rest so the user knows leaving the input blank
+// applies the default.
+const FN_DEFAULT_NAMES = new Set([
+  'autoincrement', 'cuid', 'uuid', 'now', 'nanoid', 'ulid', 'dbgenerated', 'sequence',
+])
+
+function isFnDefault(field) {
+  if (!field.hasDefault) return false
+  const d = field.default
+  return Boolean(d && typeof d === 'object' && FN_DEFAULT_NAMES.has(d.name))
+}
+
+// Field is fully "auto" — never editable. Reserved for: PKs that have a
+// function default (autoincrement/sequence/cuid/uuid/etc.), DB-generated
+// columns, @updatedAt (Prisma overwrites the value on every write), and list
+// relations. Everything else (incl. createdAt with @default(now())) stays
+// visible so users can optionally override the default.
 function isAutoField(field) {
-  if (field.isGenerated) return true
   if (field.isUpdatedAt) return true
   if (field.isList && field.relationName) return true
-  if (field.isId) return true
-  if (field.hasDefault) {
-    const d = field.default
-    if (!d) return false
-    if (typeof d === 'object' && ['autoincrement', 'cuid', 'uuid', 'now'].includes(d.name)) return true
-    if (typeof d === 'string' && d === 'now') return true
-  }
+  if (field.isId && (field.isGenerated || isFnDefault(field))) return true
+  // dbgenerated columns are computed by the DB on every write — never editable
+  if (field.hasDefault && typeof field.default === 'object' && field.default?.name === 'dbgenerated') return true
   return false
+}
+
+function defaultHint(field) {
+  if (!field.hasDefault) return null
+  const d = field.default
+  if (d === null || d === undefined) return null
+  if (typeof d === 'object' && d.name) {
+    if (Array.isArray(d.args) && d.args.length > 0) return `default: ${d.name}(${d.args.map(a => JSON.stringify(a)).join(', ')})`
+    return `default: ${d.name}()`
+  }
+  return `default: ${JSON.stringify(d)}`
 }
 
 const LABEL_FIELDS = [
@@ -117,7 +142,26 @@ function RelationPicker({ fkInfo, value, onChange, isRequired }) {
   )
 }
 
-export default function AddRecordModal({ modelName, fields, onSubmit, onClose, saving }) {
+// Convert a raw field value (from a record, possibly a relation object) into
+// the string the form input expects.
+function rawToFormValue(field, raw) {
+  if (raw === null || raw === undefined) return ''
+  if (field.type === 'Boolean') return Boolean(raw)
+  if (field.type === 'DateTime') {
+    try { return new Date(raw).toISOString().slice(0, 16) } catch { return '' }
+  }
+  return String(raw)
+}
+
+// `<input type="datetime-local">` wants "YYYY-MM-DDTHH:mm" in the *local*
+// timezone — `toISOString` would shift to UTC and display the wrong wall time.
+function nowLocalForInput() {
+  const d = new Date()
+  const pad = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+export default function AddRecordModal({ modelName, fields, onSubmit, onClose, saving, initialValues = null, title }) {
   // Map FK scalar field name → { modelName, valueField }
   const fkMap = {}
   fields
@@ -138,7 +182,16 @@ export default function AddRecordModal({ modelName, fields, onSubmit, onClose, s
   const [values, setValues] = useState(() =>
     Object.fromEntries(
       editableFields.map(f => {
-        if (f.type === 'Boolean') return [f.name, false]
+        if (initialValues && Object.prototype.hasOwnProperty.call(initialValues, f.name)) {
+          return [f.name, rawToFormValue(f, initialValues[f.name])]
+        }
+        if (f.type === 'Boolean') {
+          if (f.hasDefault && typeof f.default === 'boolean') return [f.name, f.default]
+          return [f.name, false]
+        }
+        // For function-style defaults (now, cuid, …) keep the input empty so
+        // submission omits the field and Prisma applies the default. Literal
+        // scalar defaults still pre-fill so the user sees what will be saved.
         if (f.hasDefault && f.default !== null && typeof f.default !== 'object') {
           return [f.name, String(f.default)]
         }
@@ -152,7 +205,11 @@ export default function AddRecordModal({ modelName, fields, onSubmit, onClose, s
   function validate() {
     const errs = {}
     for (const f of editableFields) {
-      if (f.isRequired && f.type !== 'Boolean' && !values[f.name] && values[f.name] !== 0) {
+      if (f.type === 'Boolean') continue
+      const v = values[f.name]
+      const isEmpty = v === '' || v === null || v === undefined
+      // Required + empty is only an error when there's no default the DB can fill.
+      if (f.isRequired && isEmpty && !f.hasDefault) {
         errs[f.name] = 'Required'
       }
     }
@@ -166,14 +223,24 @@ export default function AddRecordModal({ modelName, fields, onSubmit, onClose, s
     const data = {}
     for (const f of editableFields) {
       const raw = values[f.name]
-      if (raw === '' || raw === null || raw === undefined) {
+      const isEmpty = raw === '' || raw === null || raw === undefined
+      if (isEmpty) {
+        // Omit fields with a default so Prisma/DB applies it. For the rest,
+        // send explicit null when the column is nullable; otherwise omit and
+        // let Prisma surface the validation error.
+        if (f.hasDefault) continue
         if (!f.isRequired) { data[f.name] = null; continue }
+        continue
       }
       if (fkMap[f.name]) data[f.name] = raw
       else if (f.type === 'Int') data[f.name] = parseInt(raw, 10)
       else if (f.type === 'Float' || f.type === 'Decimal') data[f.name] = parseFloat(raw)
       else if (f.type === 'Boolean') data[f.name] = Boolean(raw)
-      else if (f.type === 'DateTime') data[f.name] = new Date(raw).toISOString()
+      else if (f.type === 'DateTime') {
+        const d = new Date(raw)
+        if (Number.isNaN(d.getTime())) continue
+        data[f.name] = d.toISOString()
+      }
       else data[f.name] = raw
     }
     onSubmit(data)
@@ -184,8 +251,11 @@ export default function AddRecordModal({ modelName, fields, onSubmit, onClose, s
       <div className="modal">
         <div className="modal-header">
           <div>
-            <div className="modal-title">Add record to {modelName}</div>
-            <div className="modal-subtitle">{editableFields.length} field{editableFields.length !== 1 ? 's' : ''} to fill</div>
+            <div className="modal-title">{title || `Add record to ${modelName}`}</div>
+            <div className="modal-subtitle">
+              {editableFields.length} field{editableFields.length !== 1 ? 's' : ''} to fill
+              {initialValues ? ' · pre-filled from source row' : ''}
+            </div>
           </div>
           <button className="modal-close" onClick={onClose}>×</button>
         </div>
@@ -194,9 +264,14 @@ export default function AddRecordModal({ modelName, fields, onSubmit, onClose, s
           {editableFields.map(field => {
             const fkInfo = fkMap[field.name]
             const isFk = Boolean(fkInfo)
+            const hint = defaultHint(field)
+            const fnDefault = isFnDefault(field)
 
             return (
-              <div className="form-field" key={field.name}>
+              <div
+                className={`form-field ${fnDefault ? 'has-fn-default' : ''} ${!fnDefault && field.hasDefault ? 'has-literal-default' : ''}`}
+                key={field.name}
+              >
                 <label className="form-label">
                   {field.name}
                   {isFk && (
@@ -205,7 +280,21 @@ export default function AddRecordModal({ modelName, fields, onSubmit, onClose, s
                     </span>
                   )}
                   {!isFk && <span className="form-type-badge">{field.type}</span>}
-                  {field.isRequired && <span className="form-required">*</span>}
+                  {fnDefault && (
+                    <span className="form-default-badge" title="Leave empty to use this default; type a value to override">
+                      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 4 21 10 15 10"/>
+                      </svg>
+                      auto
+                    </span>
+                  )}
+                  {!fnDefault && field.hasDefault && (
+                    <span className="form-default-badge form-default-badge-literal" title="Pre-filled from schema default; edit to override">
+                      default
+                    </span>
+                  )}
+                  {field.isRequired && !field.hasDefault && <span className="form-required">*</span>}
+                  {hint && <span className="form-default-hint" title="Leave empty to apply this default">{hint}</span>}
                 </label>
 
                 {isFk ? (
@@ -243,18 +332,41 @@ export default function AddRecordModal({ modelName, fields, onSubmit, onClose, s
                   </select>
 
                 ) : field.type === 'DateTime' ? (
-                  <input
-                    type="datetime-local"
-                    className="form-input"
-                    value={values[field.name] || ''}
-                    onChange={e => setValues(v => ({ ...v, [field.name]: e.target.value }))}
-                  />
+                  <div className="form-datetime-row">
+                    <input
+                      type="datetime-local"
+                      className="form-input"
+                      placeholder={fnDefault ? `auto · ${hint || 'default'}` : field.hasDefault ? 'leave empty for default' : (field.isRequired ? 'required' : 'null')}
+                      value={values[field.name] || ''}
+                      onChange={e => setValues(v => ({ ...v, [field.name]: e.target.value }))}
+                    />
+                    <button
+                      type="button"
+                      className="form-datetime-now"
+                      onClick={() => setValues(v => ({ ...v, [field.name]: nowLocalForInput() }))}
+                      title="Set to current date and time"
+                    >
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="12" r="9"/>
+                        <polyline points="12 7 12 12 15 14"/>
+                      </svg>
+                      Now
+                    </button>
+                    {values[field.name] && (
+                      <button
+                        type="button"
+                        className="form-datetime-clear"
+                        onClick={() => setValues(v => ({ ...v, [field.name]: '' }))}
+                        title="Clear"
+                      >×</button>
+                    )}
+                  </div>
 
                 ) : (
                   <input
                     type={field.type === 'Int' || field.type === 'Float' ? 'number' : 'text'}
                     className="form-input"
-                    placeholder={field.isRequired ? 'required' : 'null'}
+                    placeholder={fnDefault ? `auto · ${hint || 'default'}` : field.hasDefault ? 'leave empty for default' : (field.isRequired ? 'required' : 'null')}
                     value={values[field.name] || ''}
                     onChange={e => setValues(v => ({ ...v, [field.name]: e.target.value }))}
                     style={errors[field.name] ? { borderColor: 'var(--error)' } : {}}

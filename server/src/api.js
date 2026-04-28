@@ -20,6 +20,97 @@ function parseEnumAnnotations(schemaPath) {
   } catch { return {} }
 }
 
+// Find the parenthesized argument of `@default(...)` on a line, balancing
+// parens and respecting quoted strings (so `@default(dbgenerated("uuid()"))`
+// resolves to the inner text correctly). Returns null if not found.
+function findDefaultArg(line) {
+  const marker = '@default('
+  const idx = line.indexOf(marker)
+  if (idx === -1) return null
+  let depth = 1
+  let inStr = false
+  let strCh = ''
+  const start = idx + marker.length
+  for (let j = start; j < line.length; j++) {
+    const ch = line[j]
+    if (inStr) {
+      if (ch === '\\') { j++; continue }
+      if (ch === strCh) inStr = false
+      continue
+    }
+    if (ch === '"' || ch === "'") { inStr = true; strCh = ch; continue }
+    if (ch === '(') depth++
+    else if (ch === ')') {
+      depth--
+      if (depth === 0) return line.slice(start, j)
+    }
+  }
+  return null
+}
+
+function parseDefaultValue(raw) {
+  const arg = raw.trim()
+  if (!arg) return null
+  // function-style call: name(...)
+  const fnHead = arg.match(/^(\w+)\s*\(/)
+  if (fnHead) {
+    const fnName = fnHead[1]
+    let i = fnHead[0].length
+    let depth = 1
+    let inStr = false
+    let strCh = ''
+    let inner = ''
+    for (; i < arg.length; i++) {
+      const ch = arg[i]
+      if (inStr) {
+        inner += ch
+        if (ch === '\\') { inner += arg[++i] || ''; continue }
+        if (ch === strCh) inStr = false
+        continue
+      }
+      if (ch === '"' || ch === "'") { inStr = true; strCh = ch; inner += ch; continue }
+      if (ch === '(') { depth++; inner += ch; continue }
+      if (ch === ')') { depth--; if (depth === 0) break; inner += ch; continue }
+      inner += ch
+    }
+    return { name: fnName, args: inner.trim() ? [inner.trim().replace(/^"|"$/g, '')] : [] }
+  }
+  if (/^".*"$/.test(arg)) return arg.slice(1, -1)
+  if (arg === 'true' || arg === 'false') return arg === 'true'
+  if (/^-?\d+$/.test(arg)) return parseInt(arg, 10)
+  if (/^-?\d+\.\d+$/.test(arg)) return parseFloat(arg)
+  return arg  // bare identifier (enum value etc.)
+}
+
+// Parse @default(...) annotations per model+field. Required because the
+// runtime `Prisma.dmmf` does NOT carry default metadata in many Prisma
+// versions, so the only reliable source is the schema file itself.
+function parseSchemaDefaults(schemaPath) {
+  if (!schemaPath || !existsSync(schemaPath)) return {}
+  try {
+    const text = readFileSync(schemaPath, 'utf-8')
+    const out = {}
+    const modelRe = /model\s+(\w+)\s*\{([\s\S]*?)\n\}/g
+    let mm
+    while ((mm = modelRe.exec(text)) !== null) {
+      const modelName = mm[1]
+      const body = mm[2]
+      const fields = {}
+      for (const rawLine of body.split('\n')) {
+        const line = rawLine.replace(/\/\/.*$/, '')  // strip line comments
+        const fm = line.match(/^\s*(\w+)\s+\w+(\?|\[\])?\s/)
+        if (!fm) continue
+        const fname = fm[1]
+        const arg = findDefaultArg(line)
+        if (arg === null) continue
+        fields[fname] = { hasDefault: true, default: parseDefaultValue(arg) }
+      }
+      out[modelName] = fields
+    }
+    return out
+  } catch { return {} }
+}
+
 export function createApiApp({ prisma, Prisma, schemaPath }) {
   const app = express()
   app.use(cors())
@@ -38,6 +129,7 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
   const modelMap = Object.fromEntries(dmmf.datamodel.models.map(m => [m.name, m]))
   const enumMap = Object.fromEntries(dmmf.datamodel.enums.map(e => [e.name, e]))
   const enumAnnotations = parseEnumAnnotations(schemaPath)
+  const schemaDefaults = parseSchemaDefaults(schemaPath)
 
   function getDelegate(modelName) {
     const key = modelName.charAt(0).toLowerCase() + modelName.slice(1)
@@ -99,28 +191,36 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
   app.get('/api/models/:model/schema', (req, res) => {
     const modelDef = modelMap[req.params.model]
     if (!modelDef) return res.status(404).json({ error: 'Model not found' })
+    const modelDefaults = schemaDefaults[req.params.model] || {}
     res.json({
       name: req.params.model,
-      fields: modelDef.fields.map(f => ({
-        name: f.name,
-        type: f.type,
-        kind: f.kind,
-        isRequired: f.isRequired,
-        isList: f.isList,
-        isId: f.isId,
-        isUnique: f.isUnique,
-        isReadOnly: f.isReadOnly,
-        isGenerated: f.isGenerated,
-        isUpdatedAt: f.isUpdatedAt,
-        hasDefault: f.hasDefault,
-        default: f.default,
-        relationName: f.relationName ?? null,
-        relationFromFields: f.relationFromFields ?? [],
-        relationToFields: f.relationToFields ?? [],
-        enumValues: f.kind === 'enum'
-          ? (enumMap[f.type]?.values?.map(v => v.name) ?? [])
-          : (enumAnnotations[f.name] ?? []),
-      })),
+      fields: modelDef.fields.map(f => {
+        // The runtime DMMF `Prisma.dmmf` doesn't reliably expose `hasDefault`
+        // / `default`, so we backfill from a direct parse of schema.prisma.
+        const parsed = modelDefaults[f.name]
+        const hasDefault = f.hasDefault ?? Boolean(parsed?.hasDefault)
+        const def = f.default ?? parsed?.default ?? null
+        return {
+          name: f.name,
+          type: f.type,
+          kind: f.kind,
+          isRequired: f.isRequired,
+          isList: f.isList,
+          isId: f.isId,
+          isUnique: f.isUnique,
+          isReadOnly: f.isReadOnly,
+          isGenerated: f.isGenerated,
+          isUpdatedAt: f.isUpdatedAt,
+          hasDefault,
+          default: def,
+          relationName: f.relationName ?? null,
+          relationFromFields: f.relationFromFields ?? [],
+          relationToFields: f.relationToFields ?? [],
+          enumValues: f.kind === 'enum'
+            ? (enumMap[f.type]?.values?.map(v => v.name) ?? [])
+            : (enumAnnotations[f.name] ?? []),
+        }
+      }),
     })
   })
 
