@@ -141,6 +141,31 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
     return field?.name ?? 'id'
   }
 
+  // True for fields that are stored as MongoDB ObjectId — string-contains
+  // search against these throws "Malformed ObjectID" at the driver. Handles
+  // both the explicit @db.ObjectId case and the convention where Mongo id
+  // fields are String without an explicit native-type entry in DMMF.
+  function isObjectIdField(field, modelFields) {
+    if (!field) return false
+    const nt = field.nativeType?.[0]
+    if (typeof nt === 'string' && nt.toLowerCase() === 'objectid') return true
+    const mongoLike = (modelFields || []).some(f => {
+      const n = f.nativeType?.[0]
+      return typeof n === 'string' && n.toLowerCase() === 'objectid'
+    })
+    if (mongoLike && field.type === 'String' && field.isId) return true
+    return false
+  }
+
+  function isSearchableStringField(field, modelFields) {
+    return field.type === 'String'
+      && field.kind === 'scalar'
+      && !field.isList
+      && !field.isReadOnly
+      && !field.isId
+      && !isObjectIdField(field, modelFields)
+  }
+
   function isCompositeId(modelName) {
     return modelMap[modelName]?.primaryKey !== null
   }
@@ -264,13 +289,7 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
     let where = {}
 
     if (search) {
-      const strFields = modelFields.filter(f =>
-        f.type === 'String'
-        && f.kind === 'scalar'
-        && !f.isList
-        && !f.isReadOnly
-        && f.nativeType?.[0] !== 'ObjectId'
-      )
+      const strFields = modelFields.filter(f => isSearchableStringField(f, modelFields))
       if (strFields.length > 0) {
         where = { OR: strFields.map(f => ({ [f.name]: { contains: search, mode: 'insensitive' } })) }
       }
@@ -425,12 +444,35 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
     try {
       const delegate = getDelegate(model)
       const queryOptions = { skip, take: pageSize, orderBy: { [safeOrderField]: orderDir }, where }
-      if (Object.keys(include).length > 0) queryOptions.include = include
-      const [records, total] = await prisma.$transaction([
-        delegate.findMany(queryOptions),
-        delegate.count({ where }),
-      ])
-      res.json({ records, total, page, pageSize })
+      const hasInclude = Object.keys(include).length > 0
+      if (hasInclude) queryOptions.include = include
+      try {
+        const [records, total] = await prisma.$transaction([
+          delegate.findMany(queryOptions),
+          delegate.count({ where }),
+        ])
+        res.json({ records, total, page, pageSize })
+      } catch (err) {
+        // P2023 = "Inconsistent column data" — typically a Mongo doc with an
+        // invalid value in an @db.ObjectId column (the relation FK), which
+        // poisons the whole findMany when relations are included. Retry
+        // without include so the row list still loads.
+        const isCoerceErr = err?.code === 'P2023'
+          || /Inconsistent column data|Malformed ObjectID/i.test(err?.message || '')
+        if (!hasInclude || !isCoerceErr) throw err
+        const { include: _drop, ...bare } = queryOptions
+        const [records, total] = await prisma.$transaction([
+          delegate.findMany(bare),
+          delegate.count({ where }),
+        ])
+        res.json({
+          records,
+          total,
+          page,
+          pageSize,
+          warning: 'Some records have invalid ObjectId values in relation fields; relations were skipped to load the page.',
+        })
+      }
     } catch (err) { res.status(500).json({ error: err.message }) }
   })
 
@@ -672,8 +714,9 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
       const orClauses = []
       pivotRels.forEach(r => {
         const m = modelMap[r.type]
-        ;(m?.fields || []).forEach(f => {
-          if (f.type === 'String' && f.kind === 'scalar' && !f.isList && !f.isReadOnly && f.nativeType?.[0] !== 'ObjectId') {
+        const sideFields = m?.fields || []
+        sideFields.forEach(f => {
+          if (isSearchableStringField(f, sideFields)) {
             orClauses.push({ [r.name]: { [f.name]: { contains: search, mode: 'insensitive' } } })
           }
         })

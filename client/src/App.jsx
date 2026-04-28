@@ -480,6 +480,7 @@ export default function App() {
       }
       const data = await api.getRecords(tab.modelName, params)
       patchTab(tabId, { records: data.records, total: data.total, loading: false })
+      if (data.warning) showToast(data.warning, 'warn')
     } catch (err) {
       showToast('Failed to load records: ' + err.message)
       patchTab(tabId, { loading: false })
