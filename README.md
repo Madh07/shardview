@@ -77,6 +77,29 @@ ShardView resolves `@prisma/client` from your project's `node_modules`, or
 from a custom `output` path declared in the schema's `generator` block — so
 both classic and modern Prisma layouts work.
 
+### Prisma 7
+
+ShardView supports Prisma 5, 6 and 7. Prisma 7 changed three things ShardView
+adapts to automatically:
+
+- **ESM-only client in a custom `output`.** The new `prisma-client` generator
+  emits an ESM client to the directory you set in `generator { output = "…" }`
+  (it's no longer placed in `node_modules`). ShardView dynamic-imports
+  `<output>/client.js`, falling back to `@prisma/client` for older projects.
+- **Driver adapter required.** `new PrismaClient()` now needs a driver adapter.
+  ShardView builds one from your `datasource` provider, so the matching adapter
+  package must be installed in your project:
+  - PostgreSQL / CockroachDB → `@prisma/adapter-pg`
+  - MySQL / MariaDB → `@prisma/adapter-mariadb`
+  - SQLite → `@prisma/adapter-better-sqlite3` (or `@prisma/adapter-libsql`)
+  - SQL Server → `@prisma/adapter-mssql`
+
+  `prisma://` Accelerate URLs keep working without an adapter.
+- **Stripped runtime DMMF.** The new client no longer exposes a complete
+  `Prisma.dmmf`. ShardView reads the full schema metadata via
+  `@prisma/internals` `getDMMF()` (resolved from your project first, matching
+  its Prisma version), so all features keep working.
+
 ## Install globally (optional)
 
 ```bash

@@ -111,7 +111,17 @@ function parseSchemaDefaults(schemaPath) {
   } catch { return {} }
 }
 
-export function createApiApp({ prisma, Prisma, schemaPath }) {
+export function createApiApp({ prisma, dmmf, Prisma, schemaPath, provider }) {
+  // `dmmf` is the full Prisma DMMF document. Historically it was read off the
+  // `Prisma` namespace (`Prisma.dmmf`), but Prisma 7's new `prisma-client`
+  // generator no longer exposes a complete DMMF at runtime, so the caller now
+  // resolves it (from `@prisma/internals` getDMMF when needed) and passes it
+  // in directly. Fall back to `Prisma.dmmf` for older callers/versions.
+  dmmf = dmmf ?? Prisma?.dmmf
+  if (!dmmf?.datamodel?.models) {
+    throw new Error('createApiApp: a full Prisma DMMF document is required (dmmf.datamodel.models missing)')
+  }
+
   const app = express()
   app.use(cors())
   app.use(express.json())
@@ -125,9 +135,19 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
     next()
   })
 
-  const { dmmf } = Prisma
   const modelMap = Object.fromEntries(dmmf.datamodel.models.map(m => [m.name, m]))
-  const enumMap = Object.fromEntries(dmmf.datamodel.enums.map(e => [e.name, e]))
+  const enumMap = Object.fromEntries((dmmf.datamodel.enums ?? []).map(e => [e.name, e]))
+
+  // Case-insensitive string matching (`mode: 'insensitive'`) is only valid on
+  // PostgreSQL/CockroachDB and MongoDB. SQLite, MySQL and SQL Server reject the
+  // `mode` argument outright, so we only add it for providers that support it.
+  const supportsInsensitive = ['postgresql', 'postgres', 'cockroachdb', 'mongodb']
+    .includes(String(provider || '').toLowerCase())
+  const insensitive = supportsInsensitive ? { mode: 'insensitive' } : {}
+
+  // `createMany({ skipDuplicates })` is unsupported on SQLite and SQL Server.
+  const supportsSkipDuplicates = ['postgresql', 'postgres', 'cockroachdb', 'mysql', 'mongodb']
+    .includes(String(provider || '').toLowerCase())
   const enumAnnotations = parseEnumAnnotations(schemaPath)
   const schemaDefaults = parseSchemaDefaults(schemaPath)
 
@@ -139,6 +159,13 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
   function getIdField(modelName) {
     const field = modelMap[modelName]?.fields.find(f => f.isId)
     return field?.name ?? 'id'
+  }
+
+  // Like getIdField but returns null instead of falling back to 'id' for models
+  // with a composite primary key (@@id) — those have no single @id field, so
+  // selecting/ordering by 'id' would reference a column that doesn't exist.
+  function getScalarIdField(modelName) {
+    return modelMap[modelName]?.fields.find(f => f.isId)?.name ?? null
   }
 
   // True for fields that are stored as MongoDB ObjectId — string-contains
@@ -291,7 +318,7 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
     if (search) {
       const strFields = modelFields.filter(f => isSearchableStringField(f, modelFields))
       if (strFields.length > 0) {
-        where = { OR: strFields.map(f => ({ [f.name]: { contains: search, mode: 'insensitive' } })) }
+        where = { OR: strFields.map(f => ({ [f.name]: { contains: search, ...insensitive } })) }
       }
     }
 
@@ -316,9 +343,9 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
       switch (op) {
         case 'equals': return { equals: v }
         case 'not': return { not: v }
-        case 'contains': return isString ? { contains: v, mode: 'insensitive' } : null
-        case 'startsWith': return isString ? { startsWith: v, mode: 'insensitive' } : null
-        case 'endsWith': return isString ? { endsWith: v, mode: 'insensitive' } : null
+        case 'contains': return isString ? { contains: v, ...insensitive } : null
+        case 'startsWith': return isString ? { startsWith: v, ...insensitive } : null
+        case 'endsWith': return isString ? { endsWith: v, ...insensitive } : null
         case 'gt': return { gt: v }
         case 'gte': return { gte: v }
         case 'lt': return { lt: v }
@@ -423,8 +450,10 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
       pivotRels.forEach(ff => {
         ff.relationFromFields.forEach(col => { select[col] = true })
       })
-      // Always select the pivot's id field too so React keys are stable
-      const pivotId = getIdField(f.type)
+      // Also select the pivot's id field (when it has a single @id) so React
+      // keys are stable. Composite-PK pivots have none — the FK columns above
+      // already identify the row.
+      const pivotId = getScalarIdField(f.type)
       if (pivotId) select[pivotId] = true
       include[f.name] = Object.keys(select).length > 0 ? { select } : true
     })
@@ -435,10 +464,14 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
       include._count = { select: Object.fromEntries(listRelFields.map(f => [f.name, true])) }
     }
 
-    // Guard: cannot order by relation fields
+    // Guard: cannot order by relation fields. Fall back to the @id field, or —
+    // for composite-PK models that have none — the first orderable scalar.
+    const orderFallback = getScalarIdField(model)
+      || modelFields.find(f => f.kind !== 'object' && !f.isList)?.name
+      || getIdField(model)
     const orderFieldDef = modelFields.find(f => f.name === orderField)
     const safeOrderField = (!orderFieldDef || orderFieldDef.kind === 'object' || orderFieldDef.isList)
-      ? getIdField(model)
+      ? orderFallback
       : orderField
 
     try {
@@ -515,14 +548,23 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
         if (f.relationToFields[0] !== idFieldName) continue
         const fk = f.relationFromFields[0]
         const depDelegate = getDelegate(m.name)
-        const depIdField = getIdField(m.name)
+        const depScalarId = getScalarIdField(m.name)
         let deps = []
         try {
           deps = await depDelegate.findMany({ where: { [fk]: idValue } })
         } catch (err) { continue }
-        for (const dep of deps) {
-          const result = await cascadeDelete(m.name, depIdField, dep[depIdField], visited)
-          totalDeleted += result.deleted
+        if (depScalarId) {
+          for (const dep of deps) {
+            const result = await cascadeDelete(m.name, depScalarId, dep[depScalarId], visited)
+            totalDeleted += result.deleted
+          }
+        } else if (deps.length) {
+          // Composite-PK dependents (typically M2M join rows) have no single id
+          // to recurse on, so delete them directly by the FK that points here.
+          try {
+            const r = await depDelegate.deleteMany({ where: { [fk]: idValue } })
+            totalDeleted += r.count
+          } catch (err) { /* leave for the FK error to surface on target delete */ }
         }
       }
     }
@@ -591,8 +633,11 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
         if (pivotRels.length < 2) continue
 
         const idField = getIdField(m.name)
-        // Select pivot id + every FK column.
-        const select = { [idField]: true }
+        const scalarId = getScalarIdField(m.name)
+        // Select every FK column, plus the single @id when there is one
+        // (composite-PK pivots have no 'id' column to select).
+        const select = {}
+        if (scalarId) select[scalarId] = true
         pivotRels.forEach(r => r.relationFromFields.forEach(c => { select[c] = true }))
 
         let rows = []
@@ -717,7 +762,7 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
         const sideFields = m?.fields || []
         sideFields.forEach(f => {
           if (isSearchableStringField(f, sideFields)) {
-            orClauses.push({ [r.name]: { [f.name]: { contains: search, mode: 'insensitive' } } })
+            orClauses.push({ [r.name]: { [f.name]: { contains: search, ...insensitive } } })
           }
         })
       })
@@ -776,7 +821,7 @@ export function createApiApp({ prisma, Prisma, schemaPath }) {
       if (Array.isArray(addSecondaryIds) && addSecondaryIds.length > 0) {
         ops.push(delegate.createMany({
           data: addSecondaryIds.map(sid => ({ [primaryFk]: primaryId, [secondaryFk]: sid })),
-          skipDuplicates: true,
+          ...(supportsSkipDuplicates ? { skipDuplicates: true } : {}),
         }))
       }
       if (ops.length > 0) await prisma.$transaction(ops)

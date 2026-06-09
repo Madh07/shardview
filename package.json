@@ -1,6 +1,6 @@
 {
   "name": "shardview",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Self-hosted database browser for any Prisma project. Drop-in CLI to browse, filter and edit data with tabs, multi-level filters, mass edit, cascade delete and pivot views.",
   "license": "BSD-3-Clause",
   "author": "max@segf.net",
@@ -47,6 +47,9 @@
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.21.2"
+  },
+  "optionalDependencies": {
+    "@prisma/internals": "^7.8.0"
   },
   "publishConfig": {
     "access": "public"
